@@ -100,18 +100,39 @@ public class DB {
         ResultSet resultSet = statement.getResultSet();
 
         List<Method> methods = filterByPattern(clazz.getDeclaredMethods(), SETTER_PATTERN);
-        T t = clazz.newInstance();
 
         if(resultSet.next()) {
-            for (Method method : methods) {
-                if (shouldNotBeInSql(method)) continue;
+            return instanceFromDB(clazz, resultSet, methods);
+        }
 
-                String simpleName = method.getParameterTypes()[0].getSimpleName();
+        return null;
+    }
 
-                Object value = resultSet.getClass().getMethod("get" + StringUtils.capitalize(simpleName), String.class)
-                        .invoke(resultSet, getPropertyName(method));
-                method.invoke(t, value);
-            }
+    public <T> List<T> findAll(Class<T> clazz, String criteria) throws SQLException, InvocationTargetException, NoSuchMethodException, IllegalAccessException, InstantiationException {
+        Statement statement = connection.createStatement();
+        statement.executeQuery("select * from " + clazz.getSimpleName() +"s where " + criteria);
+        ResultSet resultSet = statement.getResultSet();
+
+        List<Method> methods = filterByPattern(clazz.getDeclaredMethods(), SETTER_PATTERN);
+
+        List<T> objs = new ArrayList<T>();
+        while(resultSet.next()) {
+            objs.add(instanceFromDB(clazz, resultSet, methods));
+        }
+
+        return objs;
+    }
+
+    private <T> T instanceFromDB(Class<T> clazz, ResultSet resultSet, List<Method> methods) throws InstantiationException, IllegalAccessException, InvocationTargetException, NoSuchMethodException {
+        T t = clazz.newInstance();
+        for (Method method : methods) {
+            if (shouldNotBeInSql(method)) continue;
+
+            String simpleName = method.getParameterTypes()[0].getSimpleName();
+
+            Object value = resultSet.getClass().getMethod("get" + StringUtils.capitalize(simpleName), String.class)
+                    .invoke(resultSet, getPropertyName(method));
+            method.invoke(t, value);
         }
         return t;
     }

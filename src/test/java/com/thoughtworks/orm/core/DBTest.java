@@ -6,8 +6,10 @@ import org.junit.Test;
 import test.domains.Comment;
 import util.DBConnectionTestUtil;
 
+import java.lang.reflect.InvocationTargetException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.List;
 
 import static org.hamcrest.core.Is.is;
 import static org.hamcrest.core.IsNot.not;
@@ -80,6 +82,18 @@ public class DBTest {
         product.save(comment);
         product.delete(comment);
         assertEquals(0, product.count(Comment.class));
+    }
+
+    @Test
+    public void should_be_able_to_select_by_criteria() throws Exception {
+        Comment comment = defaultComment();
+        product.save(comment);
+
+        List<Comment> comments = product.findAll(Comment.class, "myuser='Liqiang' and summery='good'");
+        assertEquals(1, comments.size());
+        assertObjsEquality(comments.get(0), comment);
+
+        assertEquals(0, product.findAll(Comment.class, "myuser='Liqiangs' and summery='good'").size());
     }
 
     private Comment defaultComment() {
