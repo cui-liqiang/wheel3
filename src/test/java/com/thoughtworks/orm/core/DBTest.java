@@ -6,15 +6,11 @@ import org.junit.Test;
 import test.domains.Comment;
 import util.DBConnectionTestUtil;
 
-import java.lang.reflect.InvocationTargetException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
-import static org.hamcrest.core.Is.is;
-import static org.hamcrest.core.IsNot.not;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 public class DBTest {
@@ -38,6 +34,18 @@ public class DBTest {
 
         product.save(comment);
         verifyObject(comment);
+    }
+
+    @Test
+    public void should_update_object() throws Exception {
+        Comment comment = defaultComment();
+
+        product.save(comment);
+        Comment comment1 = product.find(Comment.class, comment.getId());
+        comment1.setComments("changed");
+        product.save(comment1);
+        Comment comment2 = product.find(Comment.class, comment.getId());
+        assertObjsEquality(comment1, comment2);
     }
 
     @Test

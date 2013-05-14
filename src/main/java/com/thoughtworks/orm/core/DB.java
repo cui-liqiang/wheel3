@@ -34,6 +34,8 @@ public class DB {
 
     final private Connection connection;
 
+    final private List<Integer> objectsInFromDB = new ArrayList<Integer>();
+
     private DB(Connection connection) {
         this.connection = connection;
     }
@@ -48,6 +50,39 @@ public class DB {
     }
 
     public void save(Object obj) throws Exception {
+        if(notInDb(obj)) {
+            create(obj);
+        } else {
+            update(obj);
+        }
+    }
+
+    private void update(Object obj) throws InvocationTargetException, IllegalAccessException, NoSuchMethodException, SQLException {
+        StringBuilder prepareString = new StringBuilder("update " + obj.getClass().getSimpleName() +"s set ");
+
+        List<Method> methods = filterByPattern(obj.getClass().getDeclaredMethods(), GETTER_PATTERN);
+        for(int i = 0;i < methods.size();i++) {
+            if(shouldNotBeInSql(methods.get(i))) continue;
+
+            Object value = methods.get(i).invoke(obj);
+            if(!(value instanceof Integer)) {
+                value = "\"" + value + "\"";
+            }
+            prepareString.append(getPropertyName(methods.get(i))).append("=").append(value);
+            if(i != methods.size() - 1) {
+                prepareString.append(",");
+            }
+        }
+
+        prepareString.append(" where id = ").append(getId(obj)).append(";");
+        connection.prepareStatement(prepareString.toString()).executeUpdate();
+    }
+
+    private boolean notInDb(Object obj) {
+        return !objectsInFromDB.contains(obj.hashCode());
+    }
+
+    private void create(Object obj) throws Exception {
         StringBuffer prepareString = new StringBuffer("insert into " + obj.getClass().getSimpleName() +"s (");
 
         List<Method> methods = filterByPattern(obj.getClass().getDeclaredMethods(), GETTER_PATTERN);
@@ -69,10 +104,14 @@ public class DB {
     }
 
     public void delete(Object obj) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException, SQLException {
-        Object id = obj.getClass().getMethod("getId").invoke(obj);
+        Object id = getId(obj);
         String prepareString = "delete from " + obj.getClass().getSimpleName() + "s where id=" + id + ";";
         PreparedStatement preparedStatement = connection.prepareStatement(prepareString.toString());
         preparedStatement.executeUpdate();
+    }
+
+    private Object getId(Object obj) throws IllegalAccessException, InvocationTargetException, NoSuchMethodException {
+        return obj.getClass().getMethod("getId").invoke(obj);
     }
 
     private ArrayList<Method> filterByPattern(Method[] declaredMethods, String pattern) {
@@ -125,6 +164,7 @@ public class DB {
 
     private <T> T instanceFromDB(Class<T> clazz, ResultSet resultSet, List<Method> methods) throws InstantiationException, IllegalAccessException, InvocationTargetException, NoSuchMethodException {
         T t = clazz.newInstance();
+        objectsInFromDB.add(t.hashCode());
         for (Method method : methods) {
             if (shouldNotBeInSql(method)) continue;
 
