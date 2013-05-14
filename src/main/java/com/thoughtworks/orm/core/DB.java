@@ -68,6 +68,13 @@ public class DB {
         }
     }
 
+    public void delete(Object obj) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException, SQLException {
+        Object id = obj.getClass().getMethod("getId").invoke(obj);
+        String prepareString = "delete from " + obj.getClass().getSimpleName() + "s where id=" + id + ";";
+        PreparedStatement preparedStatement = connection.prepareStatement(prepareString.toString());
+        preparedStatement.executeUpdate();
+    }
+
     private ArrayList<Method> filterByPattern(Method[] declaredMethods, String pattern) {
         ArrayList<Method> methods = new ArrayList<Method>();
         for (Method declaredMethod : declaredMethods) {
@@ -76,6 +83,15 @@ public class DB {
             }
         }
         return methods;
+    }
+
+    public <T> int count(Class<T> clazz) throws SQLException {
+        Statement statement = connection.createStatement();
+        ResultSet resultSet = statement.executeQuery("select count(*) as 'count' from " + clazz.getSimpleName() + "s;");
+        if(resultSet.next()) {
+            return resultSet.getInt("count");
+        }
+        return 0;
     }
 
     public <T> T find(Class<T> clazz, int id) throws SQLException, IllegalAccessException, InstantiationException, InvocationTargetException, NoSuchMethodException {

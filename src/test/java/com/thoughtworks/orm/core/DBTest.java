@@ -32,12 +32,7 @@ public class DBTest {
 
     @Test
     public void should_save_object_with_all_fields_set() throws Exception {
-        Comment comment = new Comment();
-        comment.setMyUser("Liqiang");
-        comment.setSummery("good");
-        comment.setWebPage("home page");
-        comment.setEmail("xx@xx.com");
-        comment.setComments("comment");
+        Comment comment = defaultComment();
 
         product.save(comment);
         verifyObject(comment);
@@ -45,12 +40,7 @@ public class DBTest {
 
     @Test
     public void should_fill_id_after_saved() throws Exception {
-        Comment comment = new Comment();
-        comment.setMyUser("Liqiang");
-        comment.setSummery("good");
-        comment.setWebPage("home page");
-        comment.setEmail("xx@xx.com");
-        comment.setComments("comment");
+        Comment comment = defaultComment();
 
         product.save(comment);
         assertTrue(comment.getId() != 0);
@@ -58,11 +48,8 @@ public class DBTest {
 
     @Test
     public void should_save_object_with_not_all_fields_set() throws Exception {
-        Comment comment = new Comment();
-        comment.setMyUser("Liqiang");
-        comment.setSummery("good");
-        comment.setWebPage("home page");
-        comment.setComments("comment");
+        Comment comment = defaultComment();
+        comment.setEmail(null);
 
         product.save(comment);
         verifyObject(comment);
@@ -70,15 +57,39 @@ public class DBTest {
 
     @Test
     public void should_be_able_to_get_object_from_db_by_id() throws Exception {
-        Comment comment = new Comment();
-        comment.setMyUser("Liqiang");
-        comment.setSummery("good");
-        comment.setWebPage("home page");
-        comment.setComments("comment");
+        Comment comment = defaultComment();
+        comment.setEmail(null);
         product.save(comment);
 
         Comment commentInDb = product.find(Comment.class, comment.getId());
         assertObjsEquality(comment, commentInDb);
+    }
+
+    @Test
+    public void should_be_able_to_get_count() throws Exception {
+        product.save(defaultComment());
+        product.save(defaultComment());
+        product.save(defaultComment());
+
+        assertEquals(3, product.count(Comment.class));
+    }
+
+    @Test
+    public void should_be_able_to_delete_obj() throws Exception {
+        Comment comment = defaultComment();
+        product.save(comment);
+        product.delete(comment);
+        assertEquals(0, product.count(Comment.class));
+    }
+
+    private Comment defaultComment() {
+        Comment comment = new Comment();
+        comment.setMyUser("Liqiang");
+        comment.setSummery("good");
+        comment.setWebPage("home page");
+        comment.setEmail("xx@xx.com");
+        comment.setComments("comment");
+        return comment;
     }
 
     private void assertObjsEquality(Comment comment, Comment commentInDb) {
