@@ -1,12 +1,14 @@
 package com.thoughtworks.orm.core;
 
 import com.sun.xml.internal.ws.util.StringUtils;
+import com.thoughtworks.orm.annotation.BelongsTo;
 import com.thoughtworks.orm.annotation.HasMany;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -34,8 +36,9 @@ public class DB {
     }
 
     final private Connection connection;
-
-    final private List<Integer> objectsInFromDB = new ArrayList<Integer>();
+    final private List<Integer> objectsIdFromDB = new ArrayList<Integer>();
+    final private List<Object> objectsCache = new ArrayList<Object>();
+    private int callDepth = 0;
 
     private DB(Connection connection) {
         this.connection = connection;
@@ -50,26 +53,26 @@ public class DB {
         return connectionMap.get(dbName);
     }
 
-    public void save(Object obj) throws Exception {
+    public void save(Object obj, Object... belongsTos) throws Exception {
         if(notInDb(obj)) {
-            create(obj);
+            create(obj, belongsTos);
         } else {
-            update(obj);
+            update(obj, belongsTos);
         }
         saveAssociations(obj);
     }
 
     private void saveAssociations(Object obj) throws Exception {
         for (Method declaredMethod : filterByPattern(obj.getClass().getDeclaredMethods(), GETTER_PATTERN)) {
-            if(markedWithHasMany(obj.getClass(), declaredMethod)) {
+            if(markedWithAnnotation(obj.getClass(), declaredMethod, HasMany.class)) {
                 for (Object association : (List)declaredMethod.invoke(obj)) {
-                    save(association);
+                    save(association, obj);
                 }
             }
         }
     }
 
-    private void update(Object obj) throws InvocationTargetException, IllegalAccessException, NoSuchMethodException, SQLException, NoSuchFieldException {
+    private void update(Object obj,  Object[] belongsTos) throws InvocationTargetException, IllegalAccessException, NoSuchMethodException, SQLException, NoSuchFieldException {
         StringBuilder prepareString = new StringBuilder("update " + obj.getClass().getSimpleName() +"s set ");
 
         List<Method> methods = filterByPattern(obj.getClass().getDeclaredMethods(), GETTER_PATTERN);
@@ -91,23 +94,43 @@ public class DB {
     }
 
     private boolean notInDb(Object obj) {
-        return !objectsInFromDB.contains(obj.hashCode());
+        return !objectsIdFromDB.contains(obj.hashCode());
     }
 
-    private void create(Object obj) throws Exception {
+    private void create(Object obj, Object[] belongsTos) throws Exception {
         StringBuffer prepareString = new StringBuffer("insert into " + obj.getClass().getSimpleName() +"s (");
 
         List<Method> methods = filterByPattern(obj.getClass().getDeclaredMethods(), GETTER_PATTERN);
 
         addColumnNamesTo(prepareString, methods, obj.getClass());
+        addBelongsToColumnNamesTo(prepareString, belongsTos);
         prepareString.append(") values (");
 
-        addPlaceHolders(prepareString, methods, obj.getClass());
+        addPlaceHolders(prepareString, methods, obj.getClass(), belongsTos.length);
         PreparedStatement preparedStatement = connection.prepareStatement(prepareString.toString());
 
-        addValuesForPlaceHolders(obj, methods, preparedStatement);
+        int index = addValuesForPlaceHolders(obj, methods, preparedStatement);
+        addBelongsToValuesTo(preparedStatement, belongsTos, index);
 
         preparedStatement.executeUpdate();
+
+        populateId(obj);
+    }
+
+    private void addBelongsToValuesTo(PreparedStatement preparedStatement, Object[] belongsTos, int index) throws InvocationTargetException, NoSuchMethodException, IllegalAccessException, SQLException {
+        for (Object belongsTo : belongsTos) {
+            preparedStatement.setInt(index++, (Integer)getId(belongsTo));
+        }
+    }
+
+    private void addBelongsToColumnNamesTo(StringBuffer prepareString, Object[] belongsTos) {
+        for(int i = 0;i < belongsTos.length;i++) {
+            prepareString.append(",");
+            prepareString.append(belongsTos[i].getClass().getSimpleName() + "_id");
+        }
+    }
+
+    private void populateId(Object obj) throws SQLException, IllegalAccessException, InvocationTargetException, NoSuchMethodException {
         Statement statement = connection.createStatement();
         ResultSet resultSet = statement.executeQuery("SELECT @@IDENTITY AS 'id'");
         if(resultSet.next()){
@@ -145,38 +168,84 @@ public class DB {
         return 0;
     }
 
-    public <T> T find(Class<T> clazz, int id) throws SQLException, IllegalAccessException, InstantiationException, InvocationTargetException, NoSuchMethodException, NoSuchFieldException {
+    public <T> T find(Class<T> clazz, int id) throws SQLException, IllegalAccessException, InstantiationException, InvocationTargetException, NoSuchMethodException, NoSuchFieldException, ClassNotFoundException {
+        increaseDepth();
+
         Statement statement = connection.createStatement();
         statement.executeQuery("select * from " + clazz.getSimpleName() +"s where id =" + id + ";");
         ResultSet resultSet = statement.getResultSet();
 
         List<Method> methods = filterByPattern(clazz.getDeclaredMethods(), SETTER_PATTERN);
 
+        T t = null;
         if(resultSet.next()) {
-            return instanceFromDB(clazz, resultSet, methods);
+            t = instanceFromDBOrCache(clazz, resultSet, methods);
         }
 
-        return null;
+        tryEndSearchSession();
+        return t;
     }
 
-    public <T> List<T> findAll(Class<T> clazz, String criteria) throws SQLException, InvocationTargetException, NoSuchMethodException, IllegalAccessException, InstantiationException, NoSuchFieldException {
+    private void tryEndSearchSession() {
+        if(--callDepth == 0) {
+            objectsCache.clear();
+        }
+    }
+
+    private void increaseDepth() {
+        callDepth++;
+    }
+
+    private <T> void retrieveHasManyAssociations(Class<T> clazz, T t) throws InvocationTargetException, NoSuchMethodException, IllegalAccessException, SQLException, NoSuchFieldException, InstantiationException, ClassNotFoundException {
+        Object id = getId(t);
+        String foreignKey = clazz.getSimpleName() + "_id";
+        for (Method method : filterByPattern(clazz.getDeclaredMethods(), SETTER_PATTERN)) {
+            if(markedWithAnnotation(clazz, method, HasMany.class)) {
+                ParameterizedType pt = (ParameterizedType) method.getGenericParameterTypes()[0];
+                // pt.getActualTypeArguments()[0].toString() will be "class #{some qualified name}", so 6 is to skip the leading "class "
+                Class associationClazz = Class.forName(pt.getActualTypeArguments()[0].toString().substring(6));
+
+                method.invoke(t, findAll(associationClazz, foreignKey + " = " + id));
+            }
+        }
+    }
+
+    private <T> void populateBelongsToAssociation(Class<T> clazz, T t, ResultSet resultSet) throws InvocationTargetException, NoSuchMethodException, IllegalAccessException, NoSuchFieldException, ClassNotFoundException, SQLException, InstantiationException {
+        for (Method method : filterByPattern(clazz.getDeclaredMethods(), SETTER_PATTERN)) {
+            if(markedWithAnnotation(clazz, method, BelongsTo.class)) {
+                Class<?> belongsToClass = method.getParameterTypes()[0];
+                Object belongsToObj = find(belongsToClass, resultSet.getInt(belongsToClass.getSimpleName() + "_id"));
+                method.invoke(t, belongsToObj);
+            }
+        }
+    }
+
+    public <T> List<T> findAll(Class<T> clazz, String criteria) throws SQLException, InvocationTargetException, NoSuchMethodException, IllegalAccessException, InstantiationException, NoSuchFieldException, ClassNotFoundException {
+        increaseDepth();
+
         Statement statement = connection.createStatement();
-        statement.executeQuery("select * from " + clazz.getSimpleName() +"s where " + criteria);
+        if(!criteria.isEmpty()) criteria = " where " + criteria;
+
+        statement.executeQuery("select * from " + clazz.getSimpleName() +"s" + criteria);
         ResultSet resultSet = statement.getResultSet();
 
         List<Method> methods = filterByPattern(clazz.getDeclaredMethods(), SETTER_PATTERN);
 
         List<T> objs = new ArrayList<T>();
         while(resultSet.next()) {
-            objs.add(instanceFromDB(clazz, resultSet, methods));
+            objs.add(instanceFromDBOrCache(clazz, resultSet, methods));
         }
 
+        tryEndSearchSession();
         return objs;
     }
 
-    private <T> T instanceFromDB(Class<T> clazz, ResultSet resultSet, List<Method> methods) throws InstantiationException, IllegalAccessException, InvocationTargetException, NoSuchMethodException, NoSuchFieldException {
+    private <T> T instanceFromDBOrCache(Class<T> clazz, ResultSet resultSet, List<Method> methods) throws InstantiationException, IllegalAccessException, InvocationTargetException, NoSuchMethodException, NoSuchFieldException, ClassNotFoundException, SQLException {
+        T objFromCache = findFromCache(clazz, resultSet.getInt("id"));
+        if(objFromCache != null) return objFromCache;
+
         T t = clazz.newInstance();
-        objectsInFromDB.add(t.hashCode());
+        objectsIdFromDB.add(t.hashCode());
         for (Method method : methods) {
             if (shouldNotBeInSql(clazz, method)) continue;
 
@@ -186,10 +255,23 @@ public class DB {
                     .invoke(resultSet, getPropertyName(method));
             method.invoke(t, value);
         }
+        objectsCache.add(t);
+
+        retrieveHasManyAssociations(clazz, t);
+        populateBelongsToAssociation(clazz, t, resultSet);
         return t;
     }
 
-    private void addValuesForPlaceHolders(Object obj, List<Method> methods, PreparedStatement preparedStatement) throws Exception {
+    private <T> T findFromCache(Class<T> clazz, int id) throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {
+        for (Object o : objectsCache) {
+            if(o.getClass().equals(clazz) && getId(o).equals(id)) {
+                return (T)o;
+            }
+        }
+        return null;
+    }
+
+    private int addValuesForPlaceHolders(Object obj, List<Method> methods, PreparedStatement preparedStatement) throws Exception {
         int index = 1;
         for (Method method : methods) {
             if (shouldNotBeInSql(obj.getClass(), method)) continue;
@@ -201,12 +283,16 @@ public class DB {
                 setValue(preparedStatement, value, index++);
             }
         }
+        return index;
     }
 
-    private void addPlaceHolders(StringBuffer prepareString, List<Method> methods, Class<?> clazz) throws NoSuchMethodException, NoSuchFieldException {
+    private void addPlaceHolders(StringBuffer prepareString, List<Method> methods, Class<?> clazz, int belongsTo) throws NoSuchMethodException, NoSuchFieldException {
         for (Method method : methods) {
             if (shouldNotBeInSql(clazz, method)) continue;
 
+            prepareString.append("?,");
+        }
+        for(int i = 0;i < belongsTo;i++) {
             prepareString.append("?,");
         }
         prepareString.replace(prepareString.length() - 1, prepareString.length(), ")");
@@ -243,17 +329,18 @@ public class DB {
     private boolean shouldNotBeInSql(Class<?> clazz, Method method) throws NoSuchFieldException, NoSuchMethodException {
         if (!Modifier.isPublic(method.getModifiers()))
             return true;
-        if (markedWithHasMany(clazz, method)) return true;
+        if (markedWithAnnotation(clazz, method, HasMany.class)) return true;
+        if (markedWithAnnotation(clazz, method, BelongsTo.class)) return true;
         return false;
     }
 
-    private boolean markedWithHasMany(Class<?> clazz, Method method) throws NoSuchFieldException, NoSuchMethodException {
+    private boolean markedWithAnnotation(Class<?> clazz, Method method, Class annotation) throws NoSuchFieldException, NoSuchMethodException {
         String propertyName = method.getName().substring(3);
         Field field = clazz.getDeclaredField(StringUtils.decapitalize(propertyName));
 
-        if (clazz.getMethod("set" + propertyName, field.getType()).getAnnotation(HasMany.class) != null
-            || clazz.getMethod("get" + propertyName).getAnnotation(HasMany.class) != null
-            || field.getAnnotation(HasMany.class) != null)
+        if (clazz.getMethod("set" + propertyName, field.getType()).getAnnotation(annotation) != null
+            || clazz.getMethod("get" + propertyName).getAnnotation(annotation) != null
+            || field.getAnnotation(annotation) != null)
             return true;
         return false;
     }

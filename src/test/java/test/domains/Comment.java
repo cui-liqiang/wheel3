@@ -1,5 +1,6 @@
 package test.domains;
 
+import com.thoughtworks.orm.annotation.BelongsTo;
 import com.thoughtworks.orm.annotation.PrimaryKey;
 
 public class Comment {
@@ -9,6 +10,16 @@ public class Comment {
     private String webPage;
     private String summery;
     private String comments;
+    private Blog blog;
+
+    @BelongsTo
+    public Blog getBlog() {
+        return blog;
+    }
+
+    public void setBlog(Blog blog) {
+        this.blog = blog;
+    }
 
     @PrimaryKey
     public int getId() {
