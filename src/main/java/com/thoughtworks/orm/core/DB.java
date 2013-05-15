@@ -3,7 +3,14 @@ package com.thoughtworks.orm.core;
 import com.sun.xml.internal.ws.util.StringUtils;
 import com.thoughtworks.orm.annotation.BelongsTo;
 import com.thoughtworks.orm.annotation.HasMany;
+import org.dom4j.Attribute;
+import org.dom4j.Document;
+import org.dom4j.DocumentException;
+import org.dom4j.Element;
+import org.dom4j.io.SAXReader;
 
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -26,14 +33,23 @@ public class DB {
     private static final String GETTER_PATTERN = "get[A-Z].*";
     private static final String SETTER_PATTERN = "set[A-Z].*";
 
-    static {
-        try {
-            connectionInfoMap.put("product", new ConnectionInfo("com.mysql.jdbc.Driver",
-                    "jdbc:mysql://localhost/feedback?user=sqluser&password=sqluserpw"));
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
+    public static void init(String configFile) throws DocumentException, ClassNotFoundException {
+        InputStream inputStream = DB.class.getClassLoader().getResourceAsStream(configFile);
+        SAXReader reader = new SAXReader();
+        Document doc = reader.read(inputStream);
+        for (Object o : doc.getRootElement().elements("db")) {
+            Element element = (Element) o;
+            String name = element.attribute("name").getValue();
+            String driver = element.element("driver").getText();
+            String connectString = element.element("connectString").getText();
+            String username = element.element("username").getText();
+            String password = element.element("password").getText();
+
+            connectionInfoMap.put(name, new ConnectionInfo(driver, connectString + "?user=" + username + "&password=" + password));
         }
     }
+
+    ////////////////////////////////////////////////////////////////
 
     final private Connection connection;
     final private List<Integer> objectsIdFromDB = new ArrayList<Integer>();

@@ -1,5 +1,6 @@
 package com.thoughtworks.orm.core;
 
+import org.dom4j.DocumentException;
 import org.junit.After;
 import org.junit.Before;
 import test.domains.Comment;
@@ -16,7 +17,8 @@ public class DBTest {
     protected DB product;
 
     @Before
-    public void setUp() throws ClassNotFoundException, SQLException {
+    public void setUp() throws ClassNotFoundException, SQLException, DocumentException {
+        DB.init("database.xml");
         product = DB.connect("product");
     }
 

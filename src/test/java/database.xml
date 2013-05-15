@@ -1,0 +1,8 @@
+<dbconfigs>
+    <db name="product">
+        <driver>com.mysql.jdbc.Driver</driver>
+        <connectString>jdbc:mysql://localhost/feedback</connectString>
+        <username>sqluser</username>
+        <password>sqluserpw</password>
+    </db>
+</dbconfigs>
